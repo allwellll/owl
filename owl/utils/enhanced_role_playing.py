@@ -24,6 +24,10 @@ from camel.logger import get_logger
 
 from copy import deepcopy
 
+# Add ANSI color code for light green
+LIGHT_GREEN = "\033[92m"
+RESET = "\033[0m"
+
 logger = get_logger(__name__)
 
 
@@ -186,6 +190,7 @@ Solution: [YOUR_SOLUTION]
 
 Please note that our overall task may be very complicated. Here are some tips that may help you solve the task:
 <tips>
+- If you need to search for information, please use the chinese search query
 - If one way fails to provide an answer, try other ways or methods. The answer does exists.
 - If the search snippet is unhelpful but the URL comes from an authoritative source, try visit the website for more details.  
 - When looking for specific numerical values (e.g., dollar amounts), prioritize reliable sources and avoid relying only on search snippets.  
@@ -478,9 +483,9 @@ def run_society(
         }
 
         chat_history.append(_data)
-        logger.info(f"Round #{_round} user_response:\n {user_response.msgs[0].content}")
+        logger.info(f"{LIGHT_GREEN}Round #{_round} user_response:\n {user_response.msgs[0].content}{RESET}")
         logger.info(
-            f"Round #{_round} assistant_response:\n {assistant_response.msgs[0].content}"
+            f"{LIGHT_GREEN}Round #{_round} assistant_response:\n {assistant_response.msgs[0].content}{RESET}"
         )
 
         if (

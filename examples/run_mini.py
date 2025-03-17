@@ -107,7 +107,7 @@ def construct_society(question: str) -> RolePlaying:
 def main():
     r"""Main function to run the OWL system with an example question."""
     # Example research question
-    question = "Navigate to Amazon.com and identify one product that is attractive to coders. Please provide me with the product name and price. No need to verify your answer."
+    question = "去https://weather.cma.cn/网站上查看北京今天的天气"
 
     # Construct and run the society
     society = construct_society(question)
