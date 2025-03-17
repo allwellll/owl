@@ -78,9 +78,6 @@ load_dotenv(dotenv_path=str(env_path))
 set_log_level(level="DEBUG")
 
 
-<<<<<<< HEAD:examples/run.py
-def construct_society(question: str) -> RolePlaying:
-=======
 class CustomWebToolkit(WebToolkit):
     def _observe(
         self, task_prompt: str, detailed_plan: Optional[str] = None
@@ -458,7 +455,6 @@ Your output should be in json format, including the following fields:
 
 
 def construct_society(question: str) -> OwlRolePlaying:
->>>>>>> 4150a27 (本地逻辑适配):owl/run.py
     r"""Construct a society of agents based on the given question.
 
     Args:
@@ -509,11 +505,7 @@ def construct_society(question: str) -> OwlRolePlaying:
 
     # Configure toolkits
     tools = [
-<<<<<<< HEAD:examples/run.py
-        *BrowserToolkit(
-=======
         *CustomWebToolkit(
->>>>>>> 4150a27 (本地逻辑适配):owl/run.py
             headless=False,  # Set to True for headless mode (e.g., on remote servers)
             web_agent_model=models["web"],
             planning_agent_model=models["planning"],
