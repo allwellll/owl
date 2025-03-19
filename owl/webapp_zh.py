@@ -99,142 +99,134 @@ def log_reader_thread(log_file):
         logging.error(f"日志读取线程出错: {str(e)}")
 
 
-def get_latest_logs(max_lines=100, queue_source=None):
-    """从队列中获取最新的日志行，如果队列为空则直接从文件读取
+# 添加一个单例类来处理与Gradio前端的通信
+class GradioMessenger:
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(GradioMessenger, cls).__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+    
+    def _initialize(self):
+        """初始化消息队列和其他属性"""
+        self.message_queue = queue.Queue()
+        self.chat_history = []
+        self.last_update_time = time.time()
+        logging.info("GradioMessenger已初始化")
+    
+    def send_message(self, role, content, add_to_log=True):
+        """发送消息到前端
+        
+        Args:
+            role: 消息发送者角色 (如 "user", "assistant", "system")
+            content: 消息内容
+            add_to_log: 是否同时添加到日志系统
+        """
+        message = {"role": role, "content": content, "timestamp": time.time()}
+        self.message_queue.put(message)
+        self.chat_history.append(message)
+        
+        # 限制历史记录长度，避免内存占用过大
+        if len(self.chat_history) > 100:
+            self.chat_history = self.chat_history[-100:]
+        
+        # 同时记录到日志系统
+        if add_to_log:
+            logging.info(f"消息 {len(self.chat_history)}, 角色: {role}, 内容: {content}")
+    
+    def get_messages(self, max_messages=50, clear_queue=True):
+        """获取队列中的消息
+        
+        Args:
+            max_messages: 最大返回消息数
+            clear_queue: 是否清空队列
+            
+        Returns:
+            list: 消息列表
+        """
+        messages = []
+        try:
+            # 从队列获取所有可用消息
+            while not self.message_queue.empty() and len(messages) < max_messages:
+                messages.append(self.message_queue.get_nowait())
+                if not clear_queue:
+                    # 如果不清空队列，将消息放回队列末尾
+                    self.message_queue.put(messages[-1])
+        except queue.Empty:
+            pass
+        
+        return messages
+    
+    def get_formatted_chat_history(self, max_messages=50):
+        """获取格式化的聊天历史记录
+        
+        Args:
+            max_messages: 最大返回消息数
+            
+        Returns:
+            str: 格式化的聊天历史
+        """
+        # 获取最新的消息
+        recent_messages = self.chat_history[-max_messages:] if self.chat_history else []
+        
+        # 从队列中获取尚未添加到历史记录的新消息
+        new_messages = self.get_messages(max_messages)
+        
+        # 合并消息并格式化
+        all_messages = recent_messages + new_messages
+        
+        if not all_messages:
+            return "暂无对话记录。"
+        
+        # 格式化消息
+        formatted_messages = []
+        for msg in all_messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            
+            # 格式化不同角色的消息
+            if role in ["user", "assistant"]:
+                formatted_messages.append(f"[{role.title()} Agent]: {content}")
+        
+        return "\n\n".join(formatted_messages)
+    
+    def clear_messages(self):
+        """清空消息队列和历史记录"""
+        # 清空队列
+        while not self.message_queue.empty():
+            try:
+                self.message_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        # 清空历史记录
+        self.chat_history = []
+        logging.info("消息队列和历史记录已清空")
 
+
+# 创建全局单例实例
+gradio_messenger = GradioMessenger()
+
+# 修改get_latest_logs函数以使用GradioMessenger
+def get_latest_logs(max_lines=100, queue_source=None):
+    """从队列中获取最新的日志行
+    
     Args:
         max_lines: 最大返回行数
-        queue_source: 指定使用哪个队列，默认为LOG_QUEUE
+        queue_source: 指定使用哪个队列，默认为LOG_QUEUE (不再使用)
 
     Returns:
         str: 日志内容
     """
-    logs = []
-    log_queue = queue_source if queue_source else LOG_QUEUE
-
-    # 创建一个临时队列来存储日志，以便我们可以处理它们而不会从原始队列中删除它们
-    temp_queue = queue.Queue()
-    temp_logs = []
-
-    try:
-        # 尝试从队列中获取所有可用的日志行
-        while not log_queue.empty() and len(temp_logs) < max_lines:
-            log = log_queue.get_nowait()
-            temp_logs.append(log)
-            temp_queue.put(log)  # 将日志放回临时队列
-    except queue.Empty:
-        pass
-
-    # 处理对话记录
-    logs = temp_logs
-
-    # 如果没有新日志或日志不足，尝试直接从文件读取最后几行
-    if len(logs) < max_lines and LOG_FILE and os.path.exists(LOG_FILE):
-        try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
-                all_lines = f.readlines()
-                # 如果队列中已有一些日志，只读取剩余需要的行数
-                remaining_lines = max_lines - len(logs)
-                file_logs = (
-                    all_lines[-remaining_lines:]
-                    if len(all_lines) > remaining_lines
-                    else all_lines
-                )
-
-                # 将文件日志添加到队列日志之前
-                logs = file_logs + logs
-        except Exception as e:
-            error_msg = f"读取日志文件出错: {str(e)}"
-            logging.error(error_msg)
-            if not logs:  # 只有在没有任何日志的情况下才添加错误消息
-                logs = [error_msg]
-
-    # 如果仍然没有日志，返回提示信息
-    if not logs:
-        return "初始化运行中..."
-
-    # 过滤日志，只保留 camel.agents.chat_agent - INFO 的日志
-    filtered_logs = []
-    for log in logs:
-        if "camel.agents.chat_agent - INFO" in log:
-            filtered_logs.append(log)
-
-    # 如果过滤后没有日志，返回提示信息
-    if not filtered_logs:
-        return "暂无对话记录。"
-
-    # 处理日志内容，提取最新的用户和助手消息
-    simplified_logs = []
-
-    # 使用集合来跟踪已经处理过的消息，避免重复
-    processed_messages = set()
-
-    def process_message(role, content):
-        # 创建一个唯一标识符来跟踪消息
-        msg_id = f"{role}:{content}"
-        if msg_id in processed_messages:
-            return None
-
-        processed_messages.add(msg_id)
-        content = content.replace("\\n", "\n")
-        lines = [line.strip() for line in content.split("\n")]
-        content = "\n".join(lines)
-
-        return f"[{role.title()} Agent]: {content}"
-
-    for log in filtered_logs:
-        formatted_messages = []
-        # 尝试提取消息数组
-        messages_match = re.search(
-            r"Model (.*?), index (\d+), processed these messages: (\[.*\])", log
-        )
-
-        if messages_match:
-            try:
-                messages = json.loads(messages_match.group(3))
-                for msg in messages:
-                    if msg.get("role") in ["user", "assistant"]:
-                        formatted_msg = process_message(
-                            msg.get("role"), msg.get("content", "")
-                        )
-                        if formatted_msg:
-                            formatted_messages.append(formatted_msg)
-            except json.JSONDecodeError:
-                pass
-
-        # 如果JSON解析失败或没有找到消息数组，尝试直接提取对话内容
-        if not formatted_messages:
-            user_pattern = re.compile(r"\{'role': 'user', 'content': '(.*?)'\}")
-            assistant_pattern = re.compile(
-                r"\{'role': 'assistant', 'content': '(.*?)'\}"
-            )
-
-            for content in user_pattern.findall(log):
-                formatted_msg = process_message("user", content)
-                if formatted_msg:
-                    formatted_messages.append(formatted_msg)
-
-            for content in assistant_pattern.findall(log):
-                formatted_msg = process_message("assistant", content)
-                if formatted_msg:
-                    formatted_messages.append(formatted_msg)
-
-        if formatted_messages:
-            simplified_logs.append("\n\n".join(formatted_messages))
-
-    # 格式化日志输出，确保每个对话记录之间有适当的分隔
-    formatted_logs = []
-    for i, log in enumerate(simplified_logs):
-        # 移除开头和结尾的多余空白字符
-        log = log.strip()
-
-        formatted_logs.append(log)
-
-        # 确保每个对话记录以换行符结束
-        if not log.endswith("\n"):
-            formatted_logs.append("\n")
-
-    return "".join(formatted_logs)
+    # 获取GradioMessenger中的格式化聊天历史
+    chat_history = gradio_messenger.get_formatted_chat_history(max_lines)
+    if chat_history and chat_history != "暂无对话记录。":
+        return chat_history
+    
+    # 如果GradioMessenger中没有消息，返回提示信息
+    return "暂无对话记录。"
 
 
 # Dictionary containing module descriptions
@@ -246,6 +238,7 @@ MODULE_DESCRIPTIONS = {
     "run_ollama": "使用本地ollama模型处理任务",
     "run_qwen_mini_zh": "使用qwen模型最小化配置处理任务",
     "run_qwen_zh": "使用qwen模型处理任务",
+    "run_ori": "使用混合模型和自定义浏览器工具包处理任务，支持图文并茂的HTML报告生成",
 }
 
 
@@ -302,6 +295,41 @@ def validate_input(question: str) -> bool:
     if not question or question.strip() == "":
         return False
     return True
+
+
+# 修改run_society函数以确保它使用我们的日志系统
+def patched_run_society(society, *args, **kwargs):
+    """包装run_society函数，确保它使用我们的消息传递系统"""
+    logging.info("开始运行社会模拟...")
+    gradio_messenger.send_message("system", "开始运行社会模拟...", add_to_log=True)
+    
+    try:
+        # 调用原始函数
+        result = run_society(society, *args, **kwargs)
+        
+        logging.info("社会模拟运行完成")
+        gradio_messenger.send_message("system", "社会模拟运行完成", add_to_log=True)
+        
+        # 如果结果包含聊天历史，将其添加到GradioMessenger
+        if isinstance(result, tuple) and len(result) >= 2:
+            answer, chat_history = result[0], result[1]
+            
+            # 将聊天历史添加到GradioMessenger
+            if chat_history and isinstance(chat_history, list):
+                for message in chat_history:
+                    if isinstance(message, dict) and "role" in message and "content" in message:
+                        gradio_messenger.send_message(
+                            message["role"], 
+                            message["content"], 
+                            add_to_log=False  # 避免重复记录
+                        )
+        
+        return result
+    except Exception as e:
+        error_msg = f"社会模拟运行出错: {str(e)}"
+        logging.error(error_msg)
+        gradio_messenger.send_message("system", error_msg, add_to_log=True)
+        raise
 
 
 def run_owl(question: str, example_module: str) -> Tuple[str, str, str]:
@@ -363,27 +391,60 @@ def run_owl(question: str, example_module: str) -> Tuple[str, str, str]:
         # 构建社会模拟
         try:
             logging.info("正在构建社会模拟...")
-            society = module.construct_society(question)
+            
+            # 特殊处理run_ori模块，应用prompt patch
+            if example_module == "run_ori":
+                from unittest.mock import patch
+                from camel.prompts.ai_society import AISocietyPromptTemplateDict
+                
+                # 导入run_ori中定义的新prompt
+                new_ASSISTANT_PROMPT = module.new_ASSISTANT_PROMPT
+                new_USER_PROMPT = module.new_USER_PROMPT
+                
+                # 使用patch应用新prompt
+                with patch.multiple(AISocietyPromptTemplateDict, 
+                                   ASSISTANT_PROMPT=new_ASSISTANT_PROMPT,
+                                   USER_PROMPT=new_USER_PROMPT):
+                    society = module.construct_society(question)
+                    
+                    # 运行社会模拟 - 使用我们的包装函数
+                    logging.info("正在运行社会模拟...")
+                    
+                    # 添加更多详细日志以便调试
+                    logging.info(f"社会模拟配置: {society.__dict__}")
+                    
+                    answer, chat_history, token_info = patched_run_society(society)
+                    logging.info(f"社会模拟运行完成，获得回答长度: {len(answer) if answer else 0}")
+            else:
+                # 常规模块处理
+                society = module.construct_society(question)
+                
+                # 运行社会模拟 - 使用我们的包装函数
+                logging.info("正在运行社会模拟...")
+                
+                # 添加更多详细日志以便调试
+                logging.info(f"社会模拟配置: {society.__dict__}")
+                
+                answer, chat_history, token_info = patched_run_society(society)
+                logging.info(f"社会模拟运行完成，获得回答长度: {len(answer) if answer else 0}")
+
+            # 记录对话历史以便在Gradio界面显示
+            if chat_history:
+                logging.info(f"对话历史记录: {chat_history}")
+                
+                # 尝试以更结构化的方式记录对话历史
+                for i, message in enumerate(chat_history):
+                    if isinstance(message, dict):
+                        role = message.get('role', 'unknown')
+                        content = message.get('content', '')
+                        logging.info(f"消息 {i}, 角色: {role}, 内容: {content}")
 
         except Exception as e:
-            logging.error(f"构建社会模拟时发生错误: {str(e)}")
+            logging.error(f"构建或运行社会模拟时发生错误: {str(e)}")
             return (
-                f"构建社会模拟时发生错误: {str(e)}",
+                f"构建或运行社会模拟时发生错误: {str(e)}",
                 "0",
-                f"❌ 错误: 构建失败 - {str(e)}",
-            )
-
-        # 运行社会模拟
-        try:
-            logging.info("正在运行社会模拟...")
-            answer, chat_history, token_info = run_society(society)
-            logging.info("社会模拟运行完成")
-        except Exception as e:
-            logging.error(f"运行社会模拟时发生错误: {str(e)}")
-            return (
-                f"运行社会模拟时发生错误: {str(e)}",
-                "0",
-                f"❌ 错误: 运行失败 - {str(e)}",
+                f"❌ 错误: {str(e)}",
             )
 
         # 安全地获取令牌计数
@@ -745,7 +806,7 @@ def create_ui():
     """创建增强版Gradio界面"""
 
     def clear_log_file():
-        """清空日志文件内容"""
+        """清空日志文件内容和消息队列"""
         try:
             if LOG_FILE and os.path.exists(LOG_FILE):
                 # 清空日志文件内容而不是删除文件
@@ -757,6 +818,8 @@ def create_ui():
                         LOG_QUEUE.get_nowait()
                     except queue.Empty:
                         break
+                # 清空GradioMessenger消息
+                gradio_messenger.clear_messages()
                 return ""
             else:
                 return ""
@@ -769,8 +832,11 @@ def create_ui():
         """处理问题并实时更新日志"""
         global CURRENT_PROCESS
 
-        # 清空日志文件
+        # 清空日志文件和消息队列
         clear_log_file()
+        
+        # 添加用户问题到GradioMessenger
+        gradio_messenger.send_message("user", question)
 
         # 创建一个后台线程来处理问题
         result_queue = queue.Queue()
@@ -780,7 +846,9 @@ def create_ui():
                 result = run_owl(question, module_name)
                 result_queue.put(result)
             except Exception as e:
-                result_queue.put((f"发生错误: {str(e)}", "0", f"❌ 错误: {str(e)}"))
+                error_msg = f"发生错误: {str(e)}"
+                gradio_messenger.send_message("system", error_msg)
+                result_queue.put((error_msg, "0", f"❌ 错误: {str(e)}"))
 
         # 启动后台处理线程
         bg_thread = threading.Thread(target=process_in_background)
@@ -805,6 +873,10 @@ def create_ui():
         if not result_queue.empty():
             result = result_queue.get()
             answer, token_count, status = result
+            
+            # 如果有回答，添加到GradioMessenger
+            if answer and "错误" not in status:
+                gradio_messenger.send_message("assistant", answer)
 
             # 最后一次更新对话记录
             logs2 = get_latest_logs(100, LOG_QUEUE)

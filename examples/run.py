@@ -547,7 +547,7 @@ def construct_society(question: str) -> OwlRolePlaying:
 def main():
     r"""Main function to run the OWL system with an example question."""
     # Example research question
-    question = "去https://health.jd.com找三个适合孩子的感冒药, 然后进行价格和其他信息的简单比较, 生成一个美观的html页面来展示结果, 网页结果上再进行一些渲染分析"
+    question = "去https://health.jd.com找三个适合孩子的感冒药, 然后进行价格的简单比较, 生成html表格"
     # question = "从这里https://www.weather.com.cn/weather/101010100.shtml, 查看北京今天的温度"
 
     # Construct and run the society

@@ -20,6 +20,8 @@ from camel.responses import ChatAgentResponse
 from camel.messages.base import BaseMessage
 from camel.societies import RolePlaying
 from camel.logger import get_logger
+from owl.webapp_zh import gradio_messenger
+
 
 
 from copy import deepcopy
@@ -149,7 +151,6 @@ Never forget you are a user and I am a assistant. Never flip roles! You will alw
 I must help you to complete a difficult task.
 You must instruct me based on my expertise and your needs to solve the task step by step. The format of your instruction is: `Instruction: [YOUR INSTRUCTION]`, where "Instruction" describes a sub-task or question.
 You must give me one instruction at a time.
-I must write a response that appropriately solves the requested instruction.
 You should instruct me not ask me questions.
 
 Please note that the task may be very complicated. Do not attempt to solve the task by single step. You must instruct me to find the answer step by step.
@@ -240,12 +241,14 @@ Please note that our overall task may be very complicated. Here are some tips th
             {self.task_prompt}
             </auxiliary_information>
             If there are available tools and you want to call them, never say 'I will ...', but first call the tool and reply based on tool call's result, and tell me which tool you have called.
+            请使用中文回答
             """
 
         else:
             # The task is done, and the assistant agent need to give the final answer about the original task
             modified_user_msg.content += f"""\n
             Now please make a final answer of the original task based on our conversation : <task>{self.task_prompt}</task>
+            请使用中文回答
             """
 
         # process assistant's response
@@ -270,6 +273,7 @@ Please note that our overall task may be very complicated. Here are some tips th
                 Before producing the final answer, please check whether I have rechecked the final answer using different toolkit as much as possible. If not, please remind me to do that.
                 If I have written codes, remind me to run the codes.
                 If you think our task is done, reply with `TASK_DONE` to end our conversation.
+                请使用中文回答
             """
 
         # return the modified messages
@@ -451,7 +455,7 @@ def run_society(
 
     chat_history = []
     init_prompt = """
-    Now please give me instructions to solve over overall task step by step. If the task requires some specific knowledge, please instruct me to use tools to complete the task.
+    Now please give me instructions to solve over overall task step by step. If the task requires some specific knowledge, please instruct me to use tools to complete the task, 输出保持中文.
         """
     input_msg = society.init_chat(init_prompt)
     for _round in range(round_limit):
