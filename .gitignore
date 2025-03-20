@@ -58,3 +58,11 @@ coverage.xml
 owl/camel/types/__pycache__/
 owl/camel/__pycache__/
 owl/camel/utils/__pycache_/
+
+# Media files
+*.html
+*.jpg
+*.bak
+*.txt
+*.png
+*.csv
