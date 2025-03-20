@@ -25,6 +25,7 @@ from dotenv import load_dotenv, set_key, find_dotenv, unset_key
 import threading
 import queue
 import re  # For regular expression operations
+from owl.common.gradio_messager import gradio_messenger
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
@@ -80,6 +81,17 @@ CURRENT_PROCESS = None  # 用于跟踪当前运行的进程
 STOP_REQUESTED = threading.Event()  # 用于标记是否请求停止
 
 
+
+
+
+
+
+
+
+
+
+
+
 # 日志读取和更新函数
 def log_reader_thread(log_file):
     """后台线程，持续读取日志文件并将新行添加到队列中"""
@@ -99,115 +111,6 @@ def log_reader_thread(log_file):
         logging.error(f"日志读取线程出错: {str(e)}")
 
 
-# 添加一个单例类来处理与Gradio前端的通信
-class GradioMessenger:
-    _instance = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(GradioMessenger, cls).__new__(cls)
-            cls._instance._initialize()
-        return cls._instance
-    
-    def _initialize(self):
-        """初始化消息队列和其他属性"""
-        self.message_queue = queue.Queue()
-        self.chat_history = []
-        self.last_update_time = time.time()
-        logging.info("GradioMessenger已初始化")
-    
-    def send_message(self, role, content, add_to_log=True):
-        """发送消息到前端
-        
-        Args:
-            role: 消息发送者角色 (如 "user", "assistant", "system")
-            content: 消息内容
-            add_to_log: 是否同时添加到日志系统
-        """
-        message = {"role": role, "content": content, "timestamp": time.time()}
-        self.message_queue.put(message)
-        self.chat_history.append(message)
-        
-        # 限制历史记录长度，避免内存占用过大
-        if len(self.chat_history) > 100:
-            self.chat_history = self.chat_history[-100:]
-        
-        # 同时记录到日志系统
-        if add_to_log:
-            logging.info(f"消息 {len(self.chat_history)}, 角色: {role}, 内容: {content}")
-    
-    def get_messages(self, max_messages=50, clear_queue=True):
-        """获取队列中的消息
-        
-        Args:
-            max_messages: 最大返回消息数
-            clear_queue: 是否清空队列
-            
-        Returns:
-            list: 消息列表
-        """
-        messages = []
-        try:
-            # 从队列获取所有可用消息
-            while not self.message_queue.empty() and len(messages) < max_messages:
-                messages.append(self.message_queue.get_nowait())
-                if not clear_queue:
-                    # 如果不清空队列，将消息放回队列末尾
-                    self.message_queue.put(messages[-1])
-        except queue.Empty:
-            pass
-        
-        return messages
-    
-    def get_formatted_chat_history(self, max_messages=50):
-        """获取格式化的聊天历史记录
-        
-        Args:
-            max_messages: 最大返回消息数
-            
-        Returns:
-            str: 格式化的聊天历史
-        """
-        # 获取最新的消息
-        recent_messages = self.chat_history[-max_messages:] if self.chat_history else []
-        
-        # 从队列中获取尚未添加到历史记录的新消息
-        new_messages = self.get_messages(max_messages)
-        
-        # 合并消息并格式化
-        all_messages = recent_messages + new_messages
-        
-        if not all_messages:
-            return "暂无对话记录。"
-        
-        # 格式化消息
-        formatted_messages = []
-        for msg in all_messages:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            
-            # 格式化不同角色的消息
-            if role in ["user", "assistant"]:
-                formatted_messages.append(f"[{role.title()} Agent]: {content}")
-        
-        return "\n\n".join(formatted_messages)
-    
-    def clear_messages(self):
-        """清空消息队列和历史记录"""
-        # 清空队列
-        while not self.message_queue.empty():
-            try:
-                self.message_queue.get_nowait()
-            except queue.Empty:
-                break
-        
-        # 清空历史记录
-        self.chat_history = []
-        logging.info("消息队列和历史记录已清空")
-
-
-# 创建全局单例实例
-gradio_messenger = GradioMessenger()
 
 # 修改get_latest_logs函数以使用GradioMessenger
 def get_latest_logs(max_lines=100, queue_source=None):
@@ -221,12 +124,128 @@ def get_latest_logs(max_lines=100, queue_source=None):
         str: 日志内容
     """
     # 获取GradioMessenger中的格式化聊天历史
-    chat_history = gradio_messenger.get_formatted_chat_history(max_lines)
+    chat_history = gradio_messenger.get_formatted_chat_history(max_lines, content_type="text")
     if chat_history and chat_history != "暂无对话记录。":
         return chat_history
     
     # 如果GradioMessenger中没有消息，返回提示信息
     return "暂无对话记录。"
+
+
+# 修改get_latest_images函数以确保图片正确显示
+def get_latest_images(max_images=20):
+    """获取最新的图片内容
+    
+    Args:
+        max_images: 最大返回图片数
+        
+    Returns:
+        list: 图片路径列表
+    """
+    images = gradio_messenger.get_formatted_chat_history(max_images, content_type="image")
+    
+    # 确保所有图片路径都是有效的
+    valid_images = []
+    for img in images:
+        if isinstance(img, str):
+            # 检查是否为有效的图片URL或路径
+            if img.startswith("http"):
+                valid_images.append(img)
+                # logging.info(f"有效图片URL: {img}")
+            elif os.path.exists(img) and any(img.lower().endswith(ext) for ext in 
+                                           ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                # 确保是绝对路径
+                if not os.path.isabs(img):
+                    img = os.path.abspath(img)
+                valid_images.append(img)
+                # logging.info(f"有效本地图片: {img}")
+            else:
+                logging.warning(f"无效图片路径: {img}")
+        else:
+            # 非字符串类型的图片内容
+            valid_images.append(img)
+            logging.info("添加非字符串类型图片内容")
+    
+    # logging.info(f"最终返回 {len(valid_images)} 张有效图片")
+    return valid_images
+
+
+# 新增函数获取HTML内容
+def get_latest_html(max_items=20):
+    """获取最新的HTML内容
+    
+    Args:
+        max_items: 最大返回HTML项目数
+        
+    Returns:
+        str: HTML内容
+    """
+    html_content = gradio_messenger.get_formatted_chat_history(1, content_type="html")
+    if not html_content or html_content == "<div class='no-content'>暂无HTML内容</div>":
+        return "<div class='no-content'>暂无HTML内容</div>"
+    
+    # 修复HTML中的相对图片路径
+    base_dir = "/Users/wangyaqi49/code_room/github/owl"
+    
+    # 使用正则表达式查找所有img标签的src属性
+    def replace_img_src(match):
+        src = match.group(1)
+        # 只处理相对路径（不以http、https开头的路径）
+        if not (src.startswith('http://') or src.startswith('https://')):
+            try:
+                # 只获取文件名部分
+                img_filename = os.path.basename(src)
+                # 拼接到目录前缀
+                full_path = os.path.join(base_dir, img_filename)
+                
+                # 检查文件是否存在
+                if os.path.exists(full_path):
+                    # 读取图片文件并转换为base64
+                    import base64
+                    import mimetypes
+                    
+                    # 获取MIME类型
+                    mime_type, _ = mimetypes.guess_type(full_path)
+                    if not mime_type:
+                        mime_type = 'image/png'  # 默认MIME类型
+                    
+                    with open(full_path, "rb") as img_file:
+                        img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                    
+                    # 返回data URI
+                    return f'src="data:{mime_type};base64,{img_data}"'
+                else:
+                    logging.warning(f"图片文件不存在: {full_path}")
+            except Exception as e:
+                logging.warning(f"处理图片时出错: {src}, 错误: {e}")
+                
+        return f'src="{src}"'
+    
+    # 替换所有img标签的src属性
+    html_content = re.sub(r'src="([^"]+)"', replace_img_src, html_content)
+    
+    # 添加基本样式以确保HTML内容正确显示
+    styled_html = f"""
+    <style>
+        .html-content-container {{
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            overflow: auto;
+            max-height: 100%;
+        }}
+        .html-content-container img {{
+            max-width: 100%;
+            height: auto;
+        }}
+    </style>
+    <div class="html-content-container">
+        {html_content}
+    </div>
+    """
+    
+    return styled_html
 
 
 # Dictionary containing module descriptions
@@ -300,15 +319,15 @@ def validate_input(question: str) -> bool:
 # 修改run_society函数以确保它使用我们的日志系统
 def patched_run_society(society, *args, **kwargs):
     """包装run_society函数，确保它使用我们的消息传递系统"""
-    logging.info("开始运行社会模拟...")
-    gradio_messenger.send_message("system", "开始运行社会模拟...", add_to_log=True)
+    # logging.info("开始运行社会模拟...")
+    # gradio_messenger.send_message("system", "开始运行社会模拟...", content_type="text", add_to_log=True)
     
     try:
         # 调用原始函数
         result = run_society(society, *args, **kwargs)
         
-        logging.info("社会模拟运行完成")
-        gradio_messenger.send_message("system", "社会模拟运行完成", add_to_log=True)
+        # logging.info("社会模拟运行完成")
+        # gradio_messenger.send_message("system", "社会模拟运行完成", content_type="text", add_to_log=True)
         
         # 如果结果包含聊天历史，将其添加到GradioMessenger
         if isinstance(result, tuple) and len(result) >= 2:
@@ -318,17 +337,80 @@ def patched_run_society(society, *args, **kwargs):
             if chat_history and isinstance(chat_history, list):
                 for message in chat_history:
                     if isinstance(message, dict) and "role" in message and "content" in message:
+                        # 检测内容类型
+                        content = message["content"]
+                        content_type = "text"  # 默认为文本
+                        
+                        # 检查是否为图片路径或URL
+                        if isinstance(content, str):
+                            # 图片URL检测
+                            if content.startswith("http") and any(ext in content.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                                content_type = "image"
+                                # logging.info(f"检测到图片URL: {content}")
+                            # 本地图片路径检测
+                            elif os.path.exists(content) and any(content.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                                content_type = "image"
+                                # 确保是绝对路径
+                                if not os.path.isabs(content):
+                                    content = os.path.abspath(content)
+                                # logging.info(f"检测到本地图片: {content}")
+                            # HTML内容检测 - 更宽松的检测条件
+                            elif (("<html" in content.lower() or "<body" in content.lower() or 
+                                  "<div" in content.lower() or "<table" in content.lower() or 
+                                  "<p" in content.lower() or "<h1" in content.lower() or
+                                  "<h2" in content.lower() or "<h3" in content.lower() or
+                                  "<ul" in content.lower() or "<ol" in content.lower() or
+                                  "<li" in content.lower() or "<span" in content.lower() or
+                                  "<style" in content.lower() or "<script" in content.lower() or
+                                  "<a href" in content.lower() or "<img" in content.lower()) and
+                                  len(content) > 50):  # 确保内容足够长，避免误判
+                                content_type = "html"
+                                # logging.info(f"检测到HTML内容，长度={len(content)}")
+                        
+                        # 发送消息到对应类型的队列
                         gradio_messenger.send_message(
                             message["role"], 
-                            message["content"], 
-                            add_to_log=False  # 避免重复记录
+                            content, 
+                            content_type=content_type,
+                            add_to_log=True  # 记录到日志以便调试
                         )
+                        # logging.info(f"已添加{content_type}类型消息到队列")
+            
+            # 检测并处理最终答案的内容类型
+            if answer:
+                content_type = "text"  # 默认为文本
+                if isinstance(answer, str):
+                    # 图片URL检测
+                    if answer.startswith("http") and any(ext in answer.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                        content_type = "image"
+                        # logging.info(f"最终答案是图片URL: {answer}")
+                    # 本地图片路径检测
+                    elif os.path.exists(answer) and any(answer.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                        content_type = "image"
+                        # 确保是绝对路径
+                        if not os.path.isabs(answer):
+                            answer = os.path.abspath(answer)
+                        # logging.info(f"最终答案是本地图片: {answer}")
+                    # HTML内容检测
+                    elif ("<html" in answer.lower() or "<div" in answer.lower() or 
+                          "<table" in answer.lower() or "<p" in answer.lower()):
+                        content_type = "html"
+                        # logging.info("最终答案是HTML内容")
+                
+                # 发送最终答案到对应类型的队列
+                gradio_messenger.send_message(
+                    "assistant", 
+                    answer, 
+                    content_type=content_type,
+                    add_to_log=True
+                )
+                # logging.info(f"已添加最终答案({content_type}类型)到队列")
         
         return result
     except Exception as e:
         error_msg = f"社会模拟运行出错: {str(e)}"
         logging.error(error_msg)
-        gradio_messenger.send_message("system", error_msg, add_to_log=True)
+        gradio_messenger.send_message("system", error_msg, content_type="text", add_to_log=True)
         raise
 
 
@@ -803,7 +885,7 @@ def get_env_var_value(key):
 
 
 def create_ui():
-    """创建增强版Gradio界面"""
+    """创建简化版Gradio界面"""
 
     def clear_log_file():
         """清空日志文件内容和消息队列"""
@@ -820,15 +902,15 @@ def create_ui():
                         break
                 # 清空GradioMessenger消息
                 gradio_messenger.clear_messages()
-                return ""
+                return "", [], ""  # 返回三种内容类型的空值
             else:
-                return ""
+                return "", [], ""
         except Exception as e:
             logging.error(f"清空日志文件时出错: {str(e)}")
-            return ""
+            return "", [], ""
 
-    # 创建一个实时日志更新函数
-    def process_with_live_logs(question, module_name):
+    # 修改process_with_live_logs函数以确保内容正确刷新
+    def process_with_live_logs(question):
         """处理问题并实时更新日志"""
         global CURRENT_PROCESS
 
@@ -836,18 +918,19 @@ def create_ui():
         clear_log_file()
         
         # 添加用户问题到GradioMessenger
-        gradio_messenger.send_message("user", question)
+        gradio_messenger.send_message("user", question, content_type="text")
 
         # 创建一个后台线程来处理问题
         result_queue = queue.Queue()
 
         def process_in_background():
             try:
-                result = run_owl(question, module_name)
+                # 使用固定的模块 "run_ori"
+                result = run_owl(question, "run_ori")
                 result_queue.put(result)
             except Exception as e:
                 error_msg = f"发生错误: {str(e)}"
-                gradio_messenger.send_message("system", error_msg)
+                gradio_messenger.send_message("system", error_msg, content_type="text")
                 result_queue.put((error_msg, "0", f"❌ 错误: {str(e)}"))
 
         # 启动后台处理线程
@@ -857,17 +940,25 @@ def create_ui():
 
         # 在等待处理完成的同时，每秒更新一次日志
         while bg_thread.is_alive():
-            # 更新对话记录显示
-            logs2 = get_latest_logs(100, LOG_QUEUE)
-
-            # 始终更新状态
+            # 更新各种内容显示
+            text_logs = get_latest_logs(100, LOG_QUEUE)
+            
+            # 获取并记录图片更新情况
+            image_logs = get_latest_images(20)
+            
+            # 获取HTML内容
+            html_logs = get_latest_html(20)
+            
+            # 始终更新状态和所有内容类型
             yield (
                 "0",
                 "<span class='status-indicator status-running'></span> 处理中...",
-                logs2,
+                text_logs,
+                image_logs,
+                html_logs
             )
 
-            time.sleep(1)
+            time.sleep(1)  # 每秒更新一次
 
         # 处理完成，获取结果
         if not result_queue.empty():
@@ -876,10 +967,36 @@ def create_ui():
             
             # 如果有回答，添加到GradioMessenger
             if answer and "错误" not in status:
-                gradio_messenger.send_message("assistant", answer)
+                # 检测回答类型
+                content_type = "text"
+                if isinstance(answer, str):
+                    # 图片URL检测
+                    if answer.startswith("http") and any(ext in answer.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                        content_type = "image"
+                    # 本地图片路径检测
+                    elif os.path.exists(answer) and any(answer.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                        content_type = "image"
+                        # 确保是绝对路径
+                        if not os.path.isabs(answer):
+                            answer = os.path.abspath(answer)
+                    # HTML内容检测
+                    elif ("<html" in answer.lower() or "<div" in answer.lower() or 
+                          "<table" in answer.lower() or "<p" in answer.lower()):
+                        content_type = "html"
+                
+                # 发送最终答案到对应类型的队列
+                gradio_messenger.send_message("assistant", answer, content_type=content_type)
+                logging.info(f"已添加最终答案({content_type}类型)到队列")
 
-            # 最后一次更新对话记录
-            logs2 = get_latest_logs(100, LOG_QUEUE)
+            # 最后一次更新所有内容
+            text_logs = get_latest_logs(100, LOG_QUEUE)
+            
+            # 获取并记录最终图片
+            image_logs = get_latest_images(20)
+            logging.info(f"最终图片显示，获取到 {len(image_logs)} 张图片: {image_logs}")
+            
+            # 获取最终HTML内容
+            html_logs = get_latest_html(20)
 
             # 根据状态设置不同的指示器
             if "错误" in status:
@@ -891,28 +1008,20 @@ def create_ui():
                     f"<span class='status-indicator status-success'></span> {status}"
                 )
 
-            yield token_count, status_with_indicator, logs2
+            yield token_count, status_with_indicator, text_logs, image_logs, html_logs
         else:
-            logs2 = get_latest_logs(100, LOG_QUEUE)
+            text_logs = get_latest_logs(100, LOG_QUEUE)
+            image_logs = get_latest_images(20)
+            html_logs = get_latest_html(20)
             yield (
                 "0",
                 "<span class='status-indicator status-error'></span> 已终止",
-                logs2,
+                text_logs,
+                image_logs,
+                html_logs
             )
 
     with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue")) as app:
-        gr.Markdown(
-            """
-                # 🦉 OWL 多智能体协作系统
-
-                基于CAMEL框架开发的先进多智能体协作系统，旨在通过智能体协作解决复杂问题。
-
-                可以通过修改本地脚本自定义模型和工具。
-                
-                本网页应用目前处于测试阶段，仅供演示和测试使用，尚未推荐用于生产环境。
-                """
-        )
-
         # 添加自定义CSS
         gr.HTML("""
             <style>
@@ -924,6 +1033,73 @@ def create_ui():
                 box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
             }
             
+            /* 内容显示区域样式 */
+            .content-display {
+                height: 600px !important; /* 增加高度从400px到600px */
+                max-height: 800px !important; /* 增加最大高度限制 */
+                overflow-y: auto !important;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+                margin-bottom: 10px;
+                resize: vertical; /* 添加垂直方向可调整大小功能 */
+            }
+            
+            /* 文本内容区域 */
+            .text-display textarea {
+                height: 600px !important; /* 增加高度从400px到600px */
+                max-height: 800px !important; /* 增加最大高度限制 */
+                overflow-y: auto !important;
+                font-family: monospace;
+                font-size: 0.9em;
+                white-space: pre-wrap;
+                line-height: 1.4;
+                resize: vertical; /* 添加垂直方向可调整大小功能 */
+            }
+            
+            /* 图片内容区域 */
+            .image-display {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 10px;
+                background-color: #f9f9f9;
+                border-radius: 10px;
+                resize: vertical; /* 添加垂直方向可调整大小功能 */
+            }
+            
+            .image-display img {
+                max-width: 100%;
+                max-height: 300px;
+                object-fit: contain;
+                border-radius: 5px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            }
+            
+            /* HTML内容区域 */
+            .html-display {
+                padding: 10px;
+                background-color: white;
+                border-radius: 10px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                resize: vertical; /* 添加垂直方向可调整大小功能 */
+            }
+            
+            /* 添加调整大小指示器 */
+            .resizable-notice {
+                font-size: 0.8em;
+                color: #888;
+                text-align: right;
+                margin-top: -5px;
+                margin-bottom: 5px;
+            }
+            
+            /* 其余样式保持不变 */
+            .no-content {
+                color: #888;
+                font-style: italic;
+                text-align: center;
+                padding: 20px;
+            }
 
             /* 改进标签页样式 */
             .tabs .tab-nav {
@@ -964,17 +1140,6 @@ def create_ui():
             
             .status-error {
                 background-color: #dc3545;
-            }
-            
-            /* 日志显示区域样式 */
-            .log-display textarea {
-                height: 400px !important;
-                max-height: 400px !important;
-                overflow-y: auto !important;
-                font-family: monospace;
-                font-size: 0.9em;
-                white-space: pre-wrap;
-                line-height: 1.4;
             }
             
             /* 环境变量管理样式 */
@@ -1101,6 +1266,50 @@ def create_ui():
                 overflow: hidden;
             }
             
+            /* 新增布局样式 */
+            .main-input-container {
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f9f9f9;
+                border-radius: 10px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            }
+            
+            .content-panels {
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+            }
+            
+            .panel-header {
+                font-weight: 600;
+                color: #2c7be5;
+                margin-bottom: 10px;
+                padding-bottom: 5px;
+                border-bottom: 2px solid #e0e8ff;
+            }
+            
+            .panel-container {
+                background-color: white;
+                border-radius: 10px;
+                padding: 15px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            }
+            
+            .top-panels {
+                display: flex;
+                gap: 20px;
+                margin-bottom: 20px;
+            }
+            
+            .top-panel {
+                flex: 1;
+                min-height: 600px; /* 增加最小高度从400px到600px */
+            }
+            
+            .bottom-panel {
+                min-height: 400px; /* 增加最小高度从300px到400px */
+            }
 
             @keyframes pulse {
                 0% { opacity: 1; }
@@ -1110,201 +1319,252 @@ def create_ui():
             </style>
             """)
 
-        with gr.Row():
-            with gr.Column(scale=1):
-                question_input = gr.Textbox(
-                    lines=5,
-                    placeholder="请输入您的问题...",
-                    label="问题",
-                    elem_id="question_input",
-                    show_copy_button=True,
-                    value="打开百度搜索，总结一下camel-ai的camel框架的github star、fork数目等，并把数字用plot包写成python文件保存到本地，并运行生成的python文件。",
-                )
-
-                # 增强版模块选择下拉菜单
-                # 只包含MODULE_DESCRIPTIONS中定义的模块
-                module_dropdown = gr.Dropdown(
-                    choices=list(MODULE_DESCRIPTIONS.keys()),
-                    value="run_qwen_zh",
-                    label="选择功能模块",
-                    interactive=True,
-                )
-
-                # 模块描述文本框
-                module_description = gr.Textbox(
-                    value=MODULE_DESCRIPTIONS["run_qwen_zh"],
-                    label="模块描述",
-                    interactive=False,
-                    elem_classes="module-info",
-                )
-
-                with gr.Row():
-                    run_button = gr.Button(
-                        "运行", variant="primary", elem_classes="primary"
-                    )
-
-                status_output = gr.HTML(
-                    value="<span class='status-indicator status-success'></span> 已就绪",
-                    label="状态",
-                )
-                token_count_output = gr.Textbox(
-                    label="令牌计数", interactive=False, elem_classes="token-count"
-                )
-
-            with gr.Tabs():  # 设置对话记录为默认选中的标签页
-                with gr.TabItem("对话记录"):
-                    # 添加对话记录显示区域
-                    log_display2 = gr.Textbox(
-                        label="对话记录",
-                        lines=25,
-                        max_lines=100,
-                        interactive=False,
-                        autoscroll=True,
+        # 顶部输入区域 - 简化版
+        with gr.Box(elem_classes="main-input-container"):
+            # 先定义输入框
+            with gr.Row():
+                with gr.Column(scale=3):
+                    question_input = gr.Textbox(
+                        lines=3,
+                        placeholder="请输入您的问题...",
+                        label="问题",
+                        elem_id="question_input",
                         show_copy_button=True,
-                        elem_classes="log-display",
-                        container=True,
-                        value="",
+                        value="请给出周星驰三个不同时期特点的分析报告",
                     )
-
+                
+                with gr.Column(scale=1):
+                    # 移除模块选择和描述，只保留按钮和状态
                     with gr.Row():
-                        refresh_logs_button2 = gr.Button("刷新记录")
-                        auto_refresh_checkbox2 = gr.Checkbox(
+                        run_button = gr.Button(
+                            "运行", variant="primary", elem_classes="primary"
+                        )
+                        clear_content_button = gr.Button("清空所有内容", variant="secondary")
+
+                    status_output = gr.HTML(
+                        value="<span class='status-indicator status-success'></span> 已就绪",
+                        label="状态",
+                    )
+                    token_count_output = gr.Textbox(
+                        label="令牌计数", interactive=False, elem_classes="token-count"
+                    )
+            
+            # 然后定义示例，放在输入框下方
+            examples = [
+                "整理重庆最好玩的两个景点",
+                "分析当前NBA最强的三个球员,生成一份对比",
+                "请给出周星驰三个不同时期的照片,并总结当时的人物特点"
+            ]
+            gr.Examples(examples=examples, inputs=question_input)
+        # 内容显示区域 - 使用分离的面板而不是标签页
+        with gr.Box(elem_classes="content-panels"):
+            # 上方两个面板并排
+            with gr.Row(elem_classes="top-panels"):
+                # 左侧面板 - 思考过程
+                with gr.Column(elem_classes="top-panel"):
+                    gr.HTML("<div class='panel-header'>思考过程</div>")
+                    # gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
+                    with gr.Box(elem_classes="panel-container"):
+                        # 文本内容显示区域
+                        text_display = gr.Textbox(
+                            lines=30, # 增加行数从20到30
+                            max_lines=150, # 增加最大行数从100到150
+                            interactive=False,
+                            autoscroll=True,
+                            show_copy_button=True,
+                            elem_classes="text-display content-display",
+                            container=True,
+                            value="",
+                        )
+
+                        with gr.Row():
+                            refresh_text_button = gr.Button("刷新")
+                            auto_refresh_text = gr.Checkbox(
+                                label="自动刷新", value=True, interactive=True
+                            )
+
+                # 右侧面板 - 界面历史
+                with gr.Column(elem_classes="top-panel"):
+                    gr.HTML("<div class='panel-header'>界面历史</div>")
+                    gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
+                    with gr.Box(elem_classes="panel-container"):
+                        # 图片内容显示区域
+                        image_display = gr.Gallery(
+                            show_label=False,
+                            elem_classes="image-display content-display",
+                            columns=2,
+                            rows=3, # 增加行数从2到3
+                            height=550, # 增加高度从350到550
+                            object_fit="contain"
+                        )
+                        
+                        with gr.Row():
+                            refresh_image_button = gr.Button("刷新")
+                            auto_refresh_image = gr.Checkbox(
+                                label="自动刷新", value=True, interactive=True
+                            )
+
+            # 下方面板 - 实时报告结果
+            with gr.Box(elem_classes="bottom-panel"):
+                gr.HTML("<div class='panel-header'>实时报告结果</div>")
+                gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
+                with gr.Box(elem_classes="panel-container"):
+                    # HTML内容显示区域
+                    html_display = gr.HTML(
+                        value="<div class='no-content'>暂无HTML内容</div>",
+                        elem_classes="html-display content-display"
+                    )
+                    
+                    with gr.Row():
+                        refresh_html_button = gr.Button("刷新")
+                        auto_refresh_html = gr.Checkbox(
                             label="自动刷新", value=True, interactive=True
                         )
-                        clear_logs_button2 = gr.Button("清空记录", variant="secondary")
 
-                with gr.TabItem("环境变量管理", id="env-settings"):
-                    with gr.Box(elem_classes="env-manager-container"):
-                        gr.Markdown("""
-                            ## 环境变量管理
-                            
-                            在此处设置模型API密钥和其他服务凭证。这些信息将保存在本地的`.env`文件中，确保您的API密钥安全存储且不会上传到网络。正确设置API密钥对于OWL系统的功能至关重要, 可以按找工具需求灵活配置环境变量。
-                            """)
+            # 环境变量管理标签页保留在原来的位置，但作为单独的标签页
+            with gr.Accordion("环境变量管理", open=False):
+                with gr.Box(elem_classes="env-manager-container"):
+                    gr.Markdown("""
+                        ## 环境变量管理
+                        
+                        在此处设置模型API密钥和其他服务凭证。这些信息将保存在本地的`.env`文件中，确保您的API密钥安全存储且不会上传到网络。正确设置API密钥对于OWL系统的功能至关重要, 可以按找工具需求灵活配置环境变量。
+                        """)
 
-                        # 主要内容分为两列布局
-                        with gr.Row():
-                            # 左侧列：环境变量管理控件
-                            with gr.Column(scale=3):
-                                with gr.Box(elem_classes="env-controls"):
-                                    # 环境变量表格 - 设置为可交互以直接编辑
-                                    gr.Markdown("""
-                                    <div style="background-color: #e7f3fe; border-left: 6px solid #2196F3; padding: 10px; margin: 15px 0; border-radius: 4px;">
-                                      <strong>提示：</strong> 请确保运行cp .env_template .env创建本地.env文件，根据运行模块灵活配置所需环境变量
-                                    </div>
-                                    """)
+                    # 主要内容分为两列布局
+                    with gr.Row():
+                        # 左侧列：环境变量管理控件
+                        with gr.Column(scale=3):
+                            with gr.Box(elem_classes="env-controls"):
+                                # 环境变量表格 - 设置为可交互以直接编辑
+                                gr.Markdown("""
+                                <div style="background-color: #e7f3fe; border-left: 6px solid #2196F3; padding: 10px; margin: 15px 0; border-radius: 4px;">
+                                  <strong>提示：</strong> 请确保运行cp .env_template .env创建本地.env文件，根据运行模块灵活配置所需环境变量
+                                </div>
+                                """)
 
-                                    # 增强版环境变量表格，支持添加和删除行
-                                    env_table = gr.Dataframe(
-                                        headers=["变量名", "值", "获取指南"],
-                                        datatype=[
-                                            "str",
-                                            "str",
-                                            "html",
-                                        ],  # 将最后一列设置为html类型以支持链接
-                                        row_count=10,  # 增加行数，以便添加新变量
-                                        col_count=(3, "fixed"),
-                                        value=update_env_table,
-                                        label="API密钥和环境变量",
-                                        interactive=True,  # 设置为可交互，允许直接编辑
-                                        elem_classes="env-table",
+                                # 增强版环境变量表格，支持添加和删除行
+                                env_table = gr.Dataframe(
+                                    headers=["变量名", "值", "获取指南"],
+                                    datatype=[
+                                        "str",
+                                        "str",
+                                        "html",
+                                    ],  # 将最后一列设置为html类型以支持链接
+                                    row_count=10,  # 增加行数，以便添加新变量
+                                    col_count=(3, "fixed"),
+                                    value=update_env_table,
+                                    label="API密钥和环境变量",
+                                    interactive=True,  # 设置为可交互，允许直接编辑
+                                    elem_classes="env-table",
+                                )
+
+                                # 操作说明
+                                gr.Markdown(
+                                    """
+                                <div style="background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 4px;">
+                                <strong>操作指南</strong>:
+                                <ul style="margin-top: 8px; margin-bottom: 8px;">
+                                  <li><strong>编辑变量</strong>: 直接点击表格中的"值"单元格进行编辑</li>
+                                  <li><strong>添加变量</strong>: 在空白行中输入新的变量名和值</li>
+                                  <li><strong>删除变量</strong>: 清空变量名即可删除该行</li>
+                                  <li><strong>获取API密钥</strong>: 点击"获取指南"列中的链接获取相应API密钥</li>
+                                </ul>
+                                </div>
+                                """,
+                                    elem_classes="env-instructions",
+                                )
+
+                                # 环境变量操作按钮
+                                with gr.Row(elem_classes="env-buttons"):
+                                    save_env_button = gr.Button(
+                                        "💾 保存更改",
+                                        variant="primary",
+                                        elem_classes="env-button",
+                                    )
+                                    refresh_button = gr.Button(
+                                        "🔄 刷新列表", elem_classes="env-button"
                                     )
 
-                                    # 操作说明
-                                    gr.Markdown(
-                                        """
-                                    <div style="background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 4px;">
-                                    <strong>操作指南</strong>:
-                                    <ul style="margin-top: 8px; margin-bottom: 8px;">
-                                      <li><strong>编辑变量</strong>: 直接点击表格中的"值"单元格进行编辑</li>
-                                      <li><strong>添加变量</strong>: 在空白行中输入新的变量名和值</li>
-                                      <li><strong>删除变量</strong>: 清空变量名即可删除该行</li>
-                                      <li><strong>获取API密钥</strong>: 点击"获取指南"列中的链接获取相应API密钥</li>
-                                    </ul>
-                                    </div>
-                                    """,
-                                        elem_classes="env-instructions",
-                                    )
+                                # 状态显示
+                                env_status = gr.HTML(
+                                    label="操作状态",
+                                    value="",
+                                    elem_classes="env-status",
+                                )
 
-                                    # 环境变量操作按钮
-                                    with gr.Row(elem_classes="env-buttons"):
-                                        save_env_button = gr.Button(
-                                            "💾 保存更改",
-                                            variant="primary",
-                                            elem_classes="env-button",
-                                        )
-                                        refresh_button = gr.Button(
-                                            "🔄 刷新列表", elem_classes="env-button"
-                                        )
-
-                                    # 状态显示
-                                    env_status = gr.HTML(
-                                        label="操作状态",
-                                        value="",
-                                        elem_classes="env-status",
-                                    )
-
-                    # 连接事件处理函数
-                    save_env_button.click(
-                        fn=save_env_table_changes,
-                        inputs=[env_table],
-                        outputs=[env_status],
-                    ).then(fn=update_env_table, outputs=[env_table])
-
-                    refresh_button.click(fn=update_env_table, outputs=[env_table])
-
-        # 示例问题
-        examples = [
-            "打开百度搜索，总结一下camel-ai的camel框架的github star、fork数目等，并把数字用plot包写成python文件保存到本地，并运行生成的python文件。",
-            "浏览亚马逊并找出一款对程序员有吸引力的产品。请提供产品名称和价格",
-            "写一个hello world的python文件，保存到本地",
-        ]
-
-        gr.Examples(examples=examples, inputs=question_input)
-
-        gr.HTML("""
-                <div class="footer" id="about">
-                    <h3>关于 OWL 多智能体协作系统</h3>
-                    <p>OWL 是一个基于CAMEL框架开发的先进多智能体协作系统，旨在通过智能体协作解决复杂问题。</p>
-                    <p>© 2025 CAMEL-AI.org. 基于Apache License 2.0开源协议</p>
-                    <p><a href="https://github.com/camel-ai/owl" target="_blank">GitHub</a></p>
-                </div>
-            """)
-
-        # 设置事件处理
+        # 设置事件处理 - 简化版，不再需要module_dropdown参数
         run_button.click(
             fn=process_with_live_logs,
-            inputs=[question_input, module_dropdown],
-            outputs=[token_count_output, status_output, log_display2],
+            inputs=[question_input],
+            outputs=[token_count_output, status_output, text_display, image_display, html_display],
         )
 
-        # 模块选择更新描述
-        module_dropdown.change(
-            fn=update_module_description,
-            inputs=module_dropdown,
-            outputs=module_description,
+        # 内容刷新相关事件处理
+        refresh_text_button.click(
+            fn=lambda: get_latest_logs(100, LOG_QUEUE), outputs=[text_display]
+        )
+        
+        refresh_image_button.click(
+            fn=lambda: get_latest_images(20), outputs=[image_display]
+        )
+        
+        refresh_html_button.click(
+            fn=lambda: get_latest_html(20), outputs=[html_display]
         )
 
-        # 对话记录相关事件处理
-        refresh_logs_button2.click(
-            fn=lambda: get_latest_logs(100, LOG_QUEUE), outputs=[log_display2]
+        clear_content_button.click(
+            fn=clear_log_file, 
+            outputs=[text_display, image_display, html_display]
         )
-
-        clear_logs_button2.click(fn=clear_log_file, outputs=[log_display2])
 
         # 自动刷新控制
-        def toggle_auto_refresh(enabled):
+        def toggle_auto_refresh(enabled, interval=3):
+            """控制自动刷新
+            
+            Args:
+                enabled: 是否启用自动刷新
+                interval: 刷新间隔（秒）
+                
+            Returns:
+                gr.update: Gradio更新对象
+            """
             if enabled:
-                return gr.update(every=3)
+                return gr.update(every=interval)
             else:
                 return gr.update(every=0)
 
-        auto_refresh_checkbox2.change(
-            fn=toggle_auto_refresh,
-            inputs=[auto_refresh_checkbox2],
-            outputs=[log_display2],
+        auto_refresh_text.change(
+            fn=lambda enabled: toggle_auto_refresh(enabled),
+            inputs=[auto_refresh_text],
+            outputs=[text_display],
+        )
+        
+        auto_refresh_image.change(
+            fn=lambda enabled: toggle_auto_refresh(enabled),
+            inputs=[auto_refresh_image],
+            outputs=[image_display],
+        )
+        
+        auto_refresh_html.change(
+            fn=lambda enabled: toggle_auto_refresh(enabled),
+            inputs=[auto_refresh_html],
+            outputs=[html_display],
         )
 
-        # 不再默认自动刷新日志
+        # 初始设置自动刷新
+        if True or gr.Checkbox.update_value:
+            text_display.every = 3
+            image_display.every = 3
+            html_display.every = 3
+
+        # 环境变量管理相关事件处理
+        save_env_button.click(
+            fn=save_env_table_changes,
+            inputs=[env_table],
+            outputs=[env_status],
+        ).then(fn=update_env_table, outputs=[env_table])
+
+        refresh_button.click(fn=update_env_table, outputs=[env_table])
 
     return app
 
@@ -1346,3 +1606,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# 添加测试函数，用于手动添加HTML内容
+

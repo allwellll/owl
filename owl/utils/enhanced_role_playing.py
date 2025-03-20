@@ -20,7 +20,8 @@ from camel.responses import ChatAgentResponse
 from camel.messages.base import BaseMessage
 from camel.societies import RolePlaying
 from camel.logger import get_logger
-from owl.webapp_zh import gradio_messenger
+import json
+from owl.common.gradio_messager import gradio_messenger
 
 
 
@@ -221,6 +222,8 @@ Please note that our overall task may be very complicated. Here are some tips th
         self, assistant_msg: BaseMessage
     ) -> Tuple[ChatAgentResponse, ChatAgentResponse]:
         user_response = self.user_agent.step(assistant_msg)
+        gradio_messenger.send_message("planner", json.dumps(user_response.msgs, ensure_ascii=False), content_type="text", add_to_log=True)
+        print('-------------------------', user_response.msgs, '-------------------------')
         if user_response.terminated or user_response.msgs is None:
             return (
                 ChatAgentResponse(msgs=[], terminated=False, info={}),
@@ -253,6 +256,8 @@ Please note that our overall task may be very complicated. Here are some tips th
 
         # process assistant's response
         assistant_response = self.assistant_agent.step(modified_user_msg)
+        gradio_messenger.send_message("worker", json.dumps(assistant_response.msgs, ensure_ascii=False), content_type="text", add_to_log=True)
+        print('-------------------------', assistant_response.msgs, '-------------------------')
         if assistant_response.terminated or assistant_response.msgs is None:
             return (
                 ChatAgentResponse(
