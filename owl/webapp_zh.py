@@ -224,6 +224,12 @@ def get_latest_html(max_items=20):
     # 替换所有img标签的src属性
     html_content = re.sub(r'src="([^"]+)"', replace_img_src, html_content)
     
+    # 移除可能存在的Error标签
+    html_content = re.sub(r'<div[^>]*>Error</div>', '', html_content)
+    html_content = re.sub(r'<span[^>]*>Error</span>', '', html_content)
+    html_content = re.sub(r'<p[^>]*>Error</p>', '', html_content)
+    html_content = re.sub(r'<button[^>]*>Error</button>', '', html_content)
+    
     # 添加基本样式以确保HTML内容正确显示
     styled_html = f"""
     <style>
@@ -238,6 +244,10 @@ def get_latest_html(max_items=20):
         .html-content-container img {{
             max-width: 100%;
             height: auto;
+        }}
+        /* 隐藏错误标签 */
+        .error-label, [class*="error"], .Error, .error {{
+            display: none !important;
         }}
     </style>
     <div class="html-content-container">
@@ -998,7 +1008,7 @@ def create_ui():
             # 获取最终HTML内容
             html_logs = get_latest_html(20)
 
-            # 根据状态设置不同的指示器
+            # 根据状态设置不同的指示器，但不在HTML内容中显示错误标签
             if "错误" in status:
                 status_with_indicator = (
                     f"<span class='status-indicator status-error'></span> {status}"
@@ -1300,11 +1310,14 @@ def create_ui():
                 display: flex;
                 gap: 20px;
                 margin-bottom: 20px;
+                flex-wrap: wrap; /* 允许在小屏幕上换行 */
             }
             
             .top-panel {
                 flex: 1;
-                min-height: 600px; /* 增加最小高度从400px到600px */
+                min-height: 600px;
+                position: relative; /* 为调整大小指示器提供定位上下文 */
+                min-width: 300px; /* 确保面板不会太窄 */
             }
             
             .bottom-panel {
@@ -1316,7 +1329,256 @@ def create_ui():
                 50% { opacity: 0.5; }
                 100% { opacity: 1; }
             }
+            
+            /* 新增可调整大小的面板样式 - 修复版 */
+            .resizable-panel {
+                position: relative !important; /* 确保相对定位 */
+                resize: both !important; /* 允许水平和垂直方向调整大小 */
+                overflow: auto !important;
+                min-height: 400px;
+                min-width: 300px;
+                max-width: 100%;
+                border: 1px solid #e0e8ff;
+                border-radius: 10px;
+                padding: 15px;
+                margin-bottom: 15px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            }
+            
+            /* 确保resize-handle正确显示 */
+            .resize-handle {
+                position: absolute !important;
+                bottom: 0 !important;
+                right: 0 !important;
+                width: 20px !important;
+                height: 20px !important;
+                cursor: nwse-resize !important;
+                background: linear-gradient(135deg, transparent 50%, #2c7be5 50%) !important;
+                border-radius: 0 0 10px 0 !important;
+                opacity: 0.7 !important;
+                z-index: 100 !important; /* 确保在最上层 */
+                pointer-events: auto !important; /* 确保可以接收鼠标事件 */
+            }
+            
+            /* 确保面板内容正确显示 */
+            .panel-container {
+                width: calc(100% - 10px) !important;
+                height: calc(100% - 50px) !important;
+                overflow: auto !important;
+            }
+            
+            /* 确保文本区域可以正确调整大小 */
+            .text-display textarea {
+                width: 100% !important;
+                height: calc(100% - 40px) !important;
+                resize: none !important; /* 防止textarea自身的resize与面板resize冲突 */
+            }
+            
+            /* 确保图片区域可以正确调整大小 */
+            .image-display {
+                width: 100% !important;
+                height: calc(100% - 40px) !important;
+            }
+            
+            /* 新增可调整大小的面板样式 */
+            .resizable-panel {
+                resize: both !important; /* 允许水平和垂直方向调整大小 */
+                overflow: auto !important;
+                min-height: 400px;
+                min-width: 300px;
+                max-width: 100%;
+                border: 1px solid #e0e8ff;
+                border-radius: 10px;
+                padding: 15px;
+                margin-bottom: 15px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            }
+            
+            .panel-container {
+                background-color: white;
+                border-radius: 10px;
+                padding: 15px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .resize-handle {
+                position: absolute;
+                bottom: 0;
+                right: 0;
+                width: 20px;
+                height: 20px;
+                cursor: nwse-resize;
+                background: linear-gradient(135deg, transparent 50%, #2c7be5 50%);
+                border-radius: 0 0 10px 0;
+                opacity: 0.7;
+            }
+            
+            .resize-handle:hover {
+                opacity: 1;
+            }
+            
+            .resize-indicator {
+                position: absolute;
+                bottom: 5px;
+                right: 25px;
+                font-size: 12px;
+                color: #888;
+                pointer-events: none;
+            }
+            
+            /* 调整顶部面板样式以支持可调整大小 */
+            .top-panels {
+                display: flex;
+                gap: 20px;
+                margin-bottom: 20px;
+                flex-wrap: wrap; /* 允许在小屏幕上换行 */
+            }
+            
+            .top-panel {
+                flex: 1;
+                min-height: 600px;
+                position: relative; /* 为调整大小指示器提供定位上下文 */
+                min-width: 300px; /* 确保面板不会太窄 */
+            }
+            
+            /* 添加自动滚动到底部的JavaScript */
             </style>
+            
+            <script>
+            // 自动滚动函数 - 当内容更新时滚动到底部
+            function autoScrollToBottom(elementId) {
+                const element = document.getElementById(elementId);
+                if (element) {
+                    // 对于textarea元素
+                    if (element.tagName.toLowerCase() === 'textarea') {
+                        element.scrollTop = element.scrollHeight;
+                    } 
+                    // 对于div容器
+                    else {
+                        element.scrollTop = element.scrollHeight;
+                    }
+                }
+            }
+            
+            // 监听DOM变化，检测内容更新
+            function setupScrollObserver() {
+                // 创建一个MutationObserver实例
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        // 获取变化的元素
+                        const target = mutation.target;
+                        
+                        // 检查是否是我们关心的内容区域
+                        if (target.closest('.text-display')) {
+                            // 找到实际的textarea元素
+                            const textarea = target.closest('.text-display').querySelector('textarea');
+                            if (textarea) {
+                                textarea.scrollTop = textarea.scrollHeight;
+                            }
+                        }
+                        
+                        // 处理图片区域
+                        if (target.closest('.image-display')) {
+                            const gallery = target.closest('.image-display');
+                            gallery.scrollTop = gallery.scrollHeight;
+                        }
+                        
+                        // 处理HTML区域
+                        if (target.closest('.html-display')) {
+                            const htmlContainer = target.closest('.html-display');
+                            htmlContainer.scrollTop = htmlContainer.scrollHeight;
+                        }
+                    });
+                });
+                
+                // 配置观察选项
+                const config = { 
+                    childList: true,    // 观察目标子节点的变化
+                    subtree: true,      // 观察所有后代节点
+                    characterData: true, // 观察文本内容
+                    attributes: true    // 观察属性变化
+                };
+                
+                // 开始观察整个文档
+                observer.observe(document.body, config);
+                
+                // 定期检查并滚动（作为备份机制）
+                setInterval(function() {
+                    // 文本区域
+                    document.querySelectorAll('.text-display textarea').forEach(function(textarea) {
+                        textarea.scrollTop = textarea.scrollHeight;
+                    });
+                    
+                    // 图片区域
+                    document.querySelectorAll('.image-display').forEach(function(gallery) {
+                        gallery.scrollTop = gallery.scrollHeight;
+                    });
+                    
+                    // HTML区域
+                    document.querySelectorAll('.html-display').forEach(function(container) {
+                        container.scrollTop = container.scrollHeight;
+                    });
+                }, 1000); // 每秒检查一次
+            }
+            
+            // 页面加载完成后设置观察器
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('DOM加载完成，初始化自动滚动功能...');
+                setupScrollObserver();
+                
+                // 初始滚动到底部
+                setTimeout(function() {
+                    document.querySelectorAll('.text-display textarea').forEach(function(textarea) {
+                        textarea.scrollTop = textarea.scrollHeight;
+                    });
+                    
+                    document.querySelectorAll('.image-display').forEach(function(gallery) {
+                        gallery.scrollTop = gallery.scrollHeight;
+                    });
+                    
+                    document.querySelectorAll('.html-display').forEach(function(container) {
+                        container.scrollTop = container.scrollHeight;
+                    });
+                }, 500);
+            });
+
+            // 添加移除错误标签的脚本
+            function removeErrorLabels() {
+                // 查找并移除所有可能的错误标签
+                const errorElements = document.querySelectorAll('.Error, .error, [class*="error"]');
+                errorElements.forEach(el => {
+                    if (el.textContent.trim() === 'Error') {
+                        el.style.display = 'none';
+                    }
+                });
+                
+                // 特别处理HTML显示区域
+                const htmlDisplay = document.querySelector('.html-display');
+                if (htmlDisplay) {
+                    const errorInHtml = htmlDisplay.querySelectorAll('.Error, .error, [class*="error"]');
+                    errorInHtml.forEach(el => {
+                        if (el.textContent.trim() === 'Error') {
+                            el.style.display = 'none';
+                        }
+                    });
+                }
+            }
+            
+            // 定期执行移除错误标签的函数
+            setInterval(removeErrorLabels, 500);
+            
+            // 页面加载完成后也执行一次
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('DOM加载完成，初始化自动滚动功能和错误标签移除...');
+                setupScrollObserver();
+                removeErrorLabels();
+                
+                // ... existing code ...
+            });
+            </script>
             """)
 
         # 顶部输入区域 - 简化版
@@ -1361,9 +1623,10 @@ def create_ui():
             # 上方两个面板并排
             with gr.Row(elem_classes="top-panels"):
                 # 左侧面板 - 思考过程
-                with gr.Column(elem_classes="top-panel"):
+                with gr.Column(elem_classes="top-panel resizable-panel"):
                     gr.HTML("<div class='panel-header'>思考过程</div>")
-                    # gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
+                    gr.HTML("<div class='resize-indicator'>↘️ 拖拽调整大小</div>")
+                    gr.HTML("<div class='resize-handle'></div>")
                     with gr.Box(elem_classes="panel-container"):
                         # 文本内容显示区域
                         text_display = gr.Textbox(
@@ -1384,9 +1647,10 @@ def create_ui():
                             )
 
                 # 右侧面板 - 界面历史
-                with gr.Column(elem_classes="top-panel"):
+                with gr.Column(elem_classes="top-panel resizable-panel"):
                     gr.HTML("<div class='panel-header'>界面历史</div>")
-                    gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
+                    gr.HTML("<div class='resize-indicator'>↘️ 拖拽调整大小</div>")
+                    gr.HTML("<div class='resize-handle'></div>")
                     with gr.Box(elem_classes="panel-container"):
                         # 图片内容显示区域
                         image_display = gr.Gallery(
@@ -1407,7 +1671,7 @@ def create_ui():
             # 下方面板 - 实时报告结果
             with gr.Box(elem_classes="bottom-panel"):
                 gr.HTML("<div class='panel-header'>实时报告结果</div>")
-                gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
+                # gr.HTML("<div class='resizable-notice'>↕️ 可拖动底部边缘调整大小</div>") # 添加调整大小提示
                 with gr.Box(elem_classes="panel-container"):
                     # HTML内容显示区域
                     html_display = gr.HTML(

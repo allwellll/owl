@@ -120,7 +120,7 @@ class GradioMessenger:
             elif content_type == "image":
                 return []
             elif content_type == "html":
-                return "<div class='no-content'>暂无HTML内容xxxxx</div>"
+                return "<div class='no-content'>暂无HTML内容</div>"
             return None
         
         # 获取最新的消息
@@ -147,10 +147,8 @@ class GradioMessenger:
                 all_messages.append(msg)
                 seen_contents.add(content)
 
-        # if content_type == "html":
-            # logging.info(f"HTML处理开始: 消息总数={len(all_messages)}")
-            # for msg in all_messages:
-                # logging.info(f"HTML消息: {msg}")
+        # 确保消息按时间戳排序
+        all_messages.sort(key=lambda x: x.get("timestamp", 0))
 
         if not all_messages:
             if content_type == "text":
@@ -169,13 +167,12 @@ class GradioMessenger:
                 content = msg.get("content", "")
                 
                 # 格式化不同角色的消息
-                # if role in ["user", "assistant", "system"]:
                 formatted_messages.append(f"[{role.title()}]: {content}")
             
             return "\n\n".join(formatted_messages)
         
         elif content_type == "image":
-            # 返回图片URL列表
+            # 返回图片URL列表，保持时间顺序
             image_urls = []
             for msg in all_messages:
                 content = msg.get("content", "")
