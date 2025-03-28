@@ -172,10 +172,15 @@ class GradioMessenger:
             return "\n\n".join(formatted_messages)
         
         elif content_type == "image":
-            # 返回图片URL列表，保持时间顺序
+            # 使用字典来跟踪每个图片的首次出现时间
+            image_order = {}
             image_urls = []
+            
+            # 首先遍历所有消息，记录每个图片的首次出现时间
             for msg in all_messages:
                 content = msg.get("content", "")
+                timestamp = msg.get("timestamp", 0)
+                
                 # 处理字符串类型的内容
                 if content and isinstance(content, str):
                     # 检查是否为有效的图片URL或路径
@@ -186,14 +191,17 @@ class GradioMessenger:
                         # 确保路径是绝对路径
                         if not content.startswith("http") and not os.path.isabs(content):
                             content = os.path.abspath(content)
-                        image_urls.append(content)
-                        # logging.info(f"添加图片到显示列表: {content}")
-                # 直接处理非字符串类型的图片内容（如PIL图像、numpy数组等）
-                elif content:
+                        # 只记录首次出现的时间戳
+                        if content not in image_order:
+                            image_order[content] = timestamp
+                            image_urls.append(content)
+                # 直接处理非字符串类型的图片内容
+                elif content and content not in image_order:
+                    image_order[str(content)] = timestamp
                     image_urls.append(content)
-                    # logging.info(f"添加非字符串图片到显示列表")
             
-            return image_urls
+            # 按照首次出现时间排序
+            return sorted(image_urls, key=lambda x: image_order.get(str(x), float('inf')))
         
         elif content_type == "html":
             # 合并所有HTML内容
